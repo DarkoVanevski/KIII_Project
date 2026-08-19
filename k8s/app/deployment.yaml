@@ -20,8 +20,8 @@ spec:
     spec:
       containers:
         - name: app
-          image: REPLACE_ME/kiii-invoices-app:latest
-          imagePullPolicy: IfNotPresent
+          image: vanevskidarko/kiii-invoices-app:latest
+          imagePullPolicy: Always
           args: ["web"]
           ports:
             - containerPort: 80
