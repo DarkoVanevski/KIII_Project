@@ -1,0 +1,30 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker
+  namespace: invoices
+  labels:
+    app: invoices
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: invoices
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: invoices
+        component: worker
+    spec:
+      containers:
+        - name: worker
+          image: REPLACE_ME/kiii-invoices-app:latest
+          imagePullPolicy: IfNotPresent
+          args: ["worker"]
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret

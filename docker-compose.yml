@@ -1,0 +1,72 @@
+services:
+  db:
+    image: mysql:8.4
+    container_name: invoices-db
+    environment:
+      MYSQL_DATABASE: invoices
+      MYSQL_USER: invoices
+      MYSQL_PASSWORD: dev-db-password-change-me
+      MYSQL_ROOT_PASSWORD: dev-root-password-change-me
+    volumes:
+      - db-data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-pdev-root-password-change-me"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  app:
+    build:
+      context: .
+    image: kiii-app:local
+    container_name: invoices-app
+    command: ["web"]
+    environment: &app-env
+      APP_NAME: "Invoice App"
+      APP_ENV: production
+      APP_KEY: base64:BtDduxqz4IklUVcmx5KlRMYVjyQb75e3qAAzUMxwgCE=
+      APP_DEBUG: "false"
+      APP_URL: http://localhost:8080
+      DB_CONNECTION: mysql
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_DATABASE: invoices
+      DB_USERNAME: invoices
+      DB_PASSWORD: dev-db-password-change-me
+      SESSION_DRIVER: database
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+      MAIL_MAILER: log
+    ports:
+      - "8080:80"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/up"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+    image: kiii-app:local
+    container_name: invoices-worker
+    command: ["worker"]
+    environment: *app-env
+    depends_on:
+      db:
+        condition: service_healthy
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  db-data:

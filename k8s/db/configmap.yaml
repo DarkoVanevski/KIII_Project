@@ -1,0 +1,10 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: db-config
+  namespace: invoices
+  labels:
+    app: invoices
+    component: db
+data:
+  MYSQL_DATABASE: invoices

@@ -1,0 +1,30 @@
+# Requires an ingress-nginx controller installed in the cluster.
+# See k8s/README.md for install instructions.
+#
+# Local demo access options:
+#   1. Add "127.0.0.1 invoices.local" to your hosts file, then browse to
+#      http://invoices.local (or the ingress controller's exposed port,
+#      e.g. via `kubectl port-forward` to the ingress-nginx-controller
+#      service).
+#   2. Or skip editing your hosts file and just send the Host header:
+#      curl -H "Host: invoices.local" http://localhost/
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: invoices
+  namespace: invoices
+  labels:
+    app: invoices
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: invoices.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: app
+                port:
+                  number: 80

@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+  namespace: invoices
+  labels:
+    app: invoices
+    component: app
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: invoices
+      component: app
+  template:
+    metadata:
+      labels:
+        app: invoices
+        component: app
+    spec:
+      containers:
+        - name: app
+          image: REPLACE_ME/kiii-invoices-app:latest
+          imagePullPolicy: IfNotPresent
+          args: ["web"]
+          ports:
+            - containerPort: 80
+              name: http
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secret
+          readinessProbe:
+            httpGet:
+              path: /up
+              port: 80
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /up
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 15
+            timeoutSeconds: 5
+            failureThreshold: 3
