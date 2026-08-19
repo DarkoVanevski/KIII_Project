@@ -22,7 +22,7 @@ services:
   app:
     build:
       context: .
-    image: kiii-app:local
+    image: vanevskidarko/kiii-invoices-app:latest
     container_name: invoices-app
     command: ["web"]
     environment: &app-env
@@ -57,7 +57,7 @@ services:
   worker:
     build:
       context: .
-    image: kiii-app:local
+    image: vanevskidarko/kiii-invoices-app:latest
     container_name: invoices-worker
     command: ["worker"]
     environment: *app-env

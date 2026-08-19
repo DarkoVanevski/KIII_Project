@@ -86,6 +86,12 @@ jobs:
     needs: build-and-push
     runs-on: self-hosted
     if: github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        # The self-hosted runner's Windows host only has Windows PowerShell
+        # (powershell.exe) installed, not PowerShell Core (pwsh) - which is
+        # what GitHub Actions defaults `run:` steps to on Windows runners.
+        shell: cmd
     steps:
       - name: Checkout
         uses: actions/checkout@v4
