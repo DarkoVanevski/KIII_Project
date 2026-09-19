@@ -1,122 +1,115 @@
-# Invoice App — CI/CD course project
+# Документација - Invoice App
 
-A multi-user invoicing app built as the project for the *Continuous Integration and
-Delivery* elective, using Laravel (Inertia + React) with a MySQL database and a
-queue worker for async invoice emailing.
+Изработено од: Дарко Ваневски - 214004
+Предмет: Континуирана Интеграција и Испорака
+Професори: д-р Панче Рибарски и м-р Стефан Андонов
+Факултет за информатички науки и компјутерско инженерство
 
-## Architecture
+- GitHub репозиториум: https://github.com/DarkoVanevski/KIII_Project
+- Docker Hub: https://hub.docker.com/r/vanevskidarko/kiii-invoices-app
+
+## 1. Краток опис на проектот
+
+Проектот „Invoice App" е веб апликација развиена како дел од предметот Континуирана Интеграција и Испорака (CI/CD), со цел да се демонстрира практична примена на DevOps алатки и процеси. Апликацијата им овозможува на корисниците (сметководители, фриленсери, мали бизниси) да управуваат со клиенти, да креираат фактури со произволен број ставки, автоматски да ги пресметуваат вкупните износи и данокот, да генерираат PDF верзија на секоја фактура, да ги испраќаат фактурите по е-пошта до клиентите и да го следат нивниот статус (нацрт, испратена, платена).
+
+Апликацијата е целосно изработена специјално за овој предмет и не користи претходно подготвен код од друг проект. Изработена е со Laravel 12 (PHP) и Inertia.js + React за интерфејсот, со MySQL база на податоци. Фокусот на проектот не е самата функционалност на апликацијата, туку интеграцијата на развојната околина со алатки како Docker, Docker Compose, GitHub Actions и Kubernetes, со цел да се воспостави целосна CI/CD платформа.
+
+## 2. Архитектура на апликацијата
+
+За разлика од класична три-слојна апликација со целосно одделени frontend и backend сервиси, Laravel + Inertia.js работи како монолитна апликација: истиот PHP код го рендерира React интерфејсот (преку Inertia) и ја имплементира целата бизнис логика (контролери, валидација, авторизација), без посебно REST/JSON API кон кое SPA-то би морало засебно да се поврзува. Поради тоа, „третиот сервис" покрај апликацијата и базата не е одделен frontend, туку **queue worker** – посебен процес кој ги извршува задачите ставени во редица (на пример, генерирање PDF и испраќање фактура по е-пошта до клиент), целосно одвоен од процесот кој ги опслужува HTTP барањата.
+
+Архитектурата ја сочинуваат:
+
+- **app** – Laravel апликација (PHP 8.3 + Apache) која ги опслужува HTTP барањата, го рендерира React интерфејсот преку Inertia.js и ја имплементира целата бизнис логика: регистрација и најава на корисници (сесиски базирана автентикација, вградена во Laravel), CRUD над клиенти и фактури, пресметка на износи, авторизациски политики (секој корисник ги гледа само своите клиенти и фактури) и генерирање PDF преку `barryvdh/laravel-dompdf`.
+- **worker** – истиот Docker image како `app`, но стартуван со поинаква команда (`php artisan queue:work`), кој ги обработува задачите ставени во редица од апликацијата – во моментов, испраќање на фактура по е-пошта со прикачен PDF. Со ова се избегнува блокирање на веб-процесот при бавни операции (генерирање PDF, испраќање пошта).
+- **база на податоци** – MySQL 8.4, во сопствен Kubernetes StatefulSet со перзистентен волумен. Redis не се користи – редицата, сесиите и кешот се чуваат во истата MySQL база (`QUEUE_CONNECTION=database`), за да не се воведува дополнителна инфраструктурна компонента без реална потреба.
+
+Структурата на репозиториумот е следна:
 
 ```
-┌──────────────────────────┐        ┌────────────┐
-│   app (Deployment x2)    │──────► │     db     │
-│  Laravel + Inertia/React │        │ (MySQL 8,  │
-│  same image as worker,   │        │ StatefulSet)│
-│  args: ["web"]           │        └────────────┘
-└──────────────────────────┘               ▲
-             ▲                              │
-             │ shares DB (jobs/cache/sessions tables)
-┌──────────────────────────┐               │
-│   worker (Deployment)    │───────────────┘
-│  same image, different   │
-│  command: args: ["worker"]│
-│  processes queued jobs   │
-│  (e.g. emailing invoice  │
-│   PDFs to clients)       │
-└──────────────────────────┘
+Invoice App
+├── app            (Laravel: контролери, модели, политики, задачи, услуги)
+├── resources/js   (React интерфејс, рендериран преку Inertia.js)
+├── routes         (веб рути)
+├── database       (миграции, фабрики, seeder-и)
+├── tests          (Pest тест пакет)
+├── docker         (entrypoint скрипта за контејнерот)
+├── k8s            (Kubernetes манифести)
+├── Dockerfile     (multi-stage build на апликацијата)
+└── docker-compose.yml (Docker Compose конфигурација)
 ```
 
-Unlike a typical split-frontend/backend app, Laravel + Inertia serves the React UI
-and the API from one codebase — so the natural "third service" (beyond app +
-database) is the **queue worker**: sending an invoice dispatches a queued job that
-renders the PDF and emails it, processed by a dedicated worker container/pod
-completely separate from the web process. Same Docker image, different `command`/
-`args` per role.
+### Комуникација помеѓу компонентите
 
-MySQL was chosen over SQLite specifically so the database is a real, independently
-deployable service — it gets its own container, its own Kubernetes StatefulSet with
-a PersistentVolumeClaim, and its own ConfigMap/Secret, none of which would make
-sense for an embedded SQLite file.
+Прелистувачот испраќа барања директно до `app` (преку Ingress рута во Kubernetes, односно преку изложениот порт во Docker Compose). Инертна навигација и формулари се испраќаат исто како и обична POST/GET, но Inertia.js ги пренесува само потребните податоци за конкретната страница, без целосно превчитување на страницата.
+`app` комуницира со базата преку интерен Kubernetes сервис (`db`), користејќи Eloquent ORM.
+Кога корисник ќе испрати фактура, `app` запишува ред во табелата `jobs` (MySQL) и веднаш одговара – самото испраќање на е-порака го презема `worker`, кој постојано ја пресретнува табелата `jobs` и ги извршува задачите независно од веб-процесот.
+Автентикацијата е сесиски базирана (Laravel-ов стандарден механизам со CSRF заштита), а не JWT – бидејќи нема одделено REST API кон кое надворешен клиент би пристапувал, туку целиот интерфејс се сервира од истата апликација.
 
-## Running locally with Docker Compose
+**Забелешка:** Во оваа верзија апликацијата е имплементирана како монолит со заеднички Docker image за `app` и `worker`, разликувани само по командата со која се стартуваат. Ова овозможува поедноставена реализација, помал број на Docker слики за одржување и полесно локално тестирање, а сепак дава реален, независно скалирачки трет сервис (worker-от), различен од базата.
 
-```bash
-docker compose up --build
-```
+## 3. Алатки за CI/CD
 
-Then open http://localhost:8080. Three containers: `app` (web, port 8080→80),
-`worker` (queue processor, no exposed port), `db` (MySQL 8.4, persisted in the
-`db-data` named volume). Both `app` and `worker` run migrations on startup and wait
-for MySQL to be reachable first, so give it a few seconds on first boot.
+GitHub Actions
 
-Env vars are documented in [.env.docker.example](.env.docker.example) — the actual
-values used locally are inlined in `docker-compose.yml` via a shared YAML anchor
-(`&app-env` / `*app-env`) so `app` and `worker` always stay in sync. These are dev
-placeholders (`dev-db-password-change-me` etc.) — swap them before using this
-anywhere that matters.
+Избраната CI/CD платформа е GitHub Actions, поради директната интеграција со GitHub репозиториумот. Секој push на гранката `main` активира pipeline кој ги тестира, гради и пушта Docker сликата, а опционално ја и повторно поставува апликацијата (bonus CD).
 
-## Running without Docker (dev)
+Docker
 
-```bash
-composer install && npm install
-cp .env.example .env && php artisan key:generate
-php artisan migrate
-composer run dev   # runs the Laravel server, Vite, and a queue listener together
-```
+Целата апликација (app и worker) е спакувана во еден Docker image преку multi-stage build, со цел финалната слика да биде мала и без непотребни build-time алатки (Node.js, Composer).
 
-Defaults to SQLite for zero-setup local dev — this is independent of the Docker
-setup, which always uses MySQL.
+Docker Compose
 
-## Kubernetes
+За локално развивање и тестирање се користи `docker-compose.yml`, кој ги оркестрира трите сервиси – `app`, `worker` и `db` (MySQL) – поврзани преку заедничка мрежа.
 
-See [k8s/README.md](k8s/README.md) for full instructions (namespace, image
-placeholders, apply order, access via Ingress or port-forward, teardown). Short
-version:
+Kubernetes
 
-```bash
-kubectl apply -f k8s/00-namespace.yaml
-kubectl apply -R -f k8s/
-kubectl get all -n invoices
-```
+За демонстрација на продукциска околина, апликацијата е поставена во сопствен namespace (`invoices`) во Kubernetes кластер. Секој сервис има свој Deployment (или StatefulSet за базата), Service, ConfigMap и Secret, а пристапот однадвор е овозможен преку Ingress. Наместо k3d или cloud провајдер, локалното тестирање е направено преку вградениот Kubernetes во Docker Desktop (базиран на `kind`), со рачно инсталиран `ingress-nginx` контролер.
 
-Works against Docker Desktop's built-in single-node Kubernetes — no cloud cluster
-needed for the demo (enable it in Docker Desktop settings if it isn't already).
+## 4. Docker
 
-## CI/CD
+Апликацијата е докеризирана преку еден `Dockerfile` со три фази (multi-stage build):
 
-[.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml) runs on every push to
-`main`:
+- **Фаза 1 – frontend (`node:20-alpine`)**: се инсталираат npm зависностите и се гради React/Inertia интерфејсот со `npm run build` (Vite), при што се добива статичен `public/build` директориум.
+- **Фаза 2 – vendor (`composer:2`)**: се инсталираат PHP зависностите со `composer install --no-dev --optimize-autoloader`, без dev-зависности и без извршување на composer-скрипти кои бараат веќе конфигурирана апликација.
+- **Фаза 3 – runtime (`php:8.3-apache`)**: во финалната слика се копираат само изградениот код, `vendor` директориумот од фаза 2 и `public/build` од фаза 1 – без Node.js или Composer во финалниот image. Се инсталираат потребните PHP екстензии (`pdo_mysql`, `mbstring`, `bcmath`, `gd`, `zip`), се вклучува `mod_rewrite` и document root-от на Apache се менува на `public/`. На крај се извршува `php artisan package:discover` (за да се регенерира кешот на пакети според продукциските зависности, а не оние од локалниот dev опкружување) и се поставуваат соодветни привилегии на `storage/` и `bootstrap/cache/`.
 
-1. **test**: installs PHP/Node deps, runs the Pest suite (against in-memory
-   SQLite), lints and builds the frontend.
-2. **build-and-push**: builds the single Docker image and pushes it to Docker Hub,
-   tagged `:latest` and `:<commit-sha>`.
-3. **deploy** (bonus CD, self-hosted runner): pulls the freshly-pushed image and
-   runs `docker compose up -d` — but only executes wherever a *self-hosted* GitHub
-   Actions runner is registered and online, since GitHub's own cloud runners can't
-   reach your local Docker Desktop. If none is registered, this job just stays
-   queued; it doesn't fail and doesn't block the build/push job.
+Клучен детал е `docker/entrypoint.sh`, кој при стартување на контејнерот прво ги кешира конфигурацијата и рутите и ги извршува миграциите (`php artisan migrate --force`), а потоа, во зависност од аргументот со кој е стартуван контејнерот, или стартува Apache (`web` – стандардна улога) или стартува `php artisan queue:work` (`worker` – улога за обработка на задачи во редица). На овој начин, **истиот Docker image служи и за апликацијата и за worker-от**, разликувани единствено преку `command`/`args` при стартување – без потреба од втор Dockerfile.
 
-### One-time setup to make CI/CD actually run
+## 5. Docker Compose
 
-1. **Docker Hub**: create a repo access token, then add `DOCKERHUB_USERNAME` and
-   `DOCKERHUB_TOKEN` as GitHub Actions secrets on this repo (Settings → Secrets and
-   variables → Actions).
-2. **Self-hosted runner** (bonus CD step): Settings → Actions → Runners → New
-   self-hosted runner, follow GitHub's generated `config.cmd`/`run.cmd` steps on
-   your own PC, and leave `run.cmd` running (or install it as a Windows service) so
-   it's online when you push.
+`docker-compose.yml` ги оркестрира трите главни сервиси:
 
-## Elaborat / rubric mapping
+- **db** – MySQL 8.4, со именуван volume (`db-data`) за перзистенција и healthcheck (`mysqladmin ping`) кој дозволува другите сервиси да чекаат базата реално да биде подготвена, наместо само да провери дека контејнерот е стартуван.
+- **app** – ја гради и користи истата Docker слика, стартувана со командата `web`, зависна од `db` преку `condition: service_healthy`, со сопствен healthcheck врз Laravel-овата вградена `/up` рута.
+- **worker** – ја користи истата слика, стартувана со командата `worker`, зависна и од `db` и од `app` (за да се осигура дека миграциите веќе се извршени пред да почне да обработува задачи).
 
-| Requirement | Where |
-|---|---|
-| Public git repo | this repo |
-| Dockerized app | `Dockerfile` (multi-stage: Node build → Composer install → PHP/Apache runtime), `docker/entrypoint.sh` |
-| Docker Compose orchestration | `docker-compose.yml` |
-| CI pipeline → image to registry | `.github/workflows/ci-cd.yml` (`test` + `build-and-push` jobs) |
-| Bonus CD → deploy to an environment | `.github/workflows/ci-cd.yml` (`deploy` job, self-hosted runner + `docker compose`) |
-| Deployment (ConfigMap/Secret) | `k8s/app/`, `k8s/worker/` |
-| Service | `k8s/app/service.yaml`, `k8s/db/service.yaml` |
-| Ingress | `k8s/ingress.yaml` |
-| StatefulSet for the DB (ConfigMap/Secret) | `k8s/db/statefulset.yaml`, `configmap.yaml`, `secret.yaml` |
-| Dedicated namespace, demonstrated running | `k8s/00-namespace.yaml`, see `k8s/README.md` for the demo commands |
+`app` и `worker` ги делат истите променливи на околината преку YAML anchor (`&app-env` / `*app-env`), со цел двата сервиси секогаш да остануваат синхронизирани и да не се дуплира конфигурацијата. Промените во околината (моментално со dev вредности како `dev-db-password-change-me`, документирани и во `.env.docker.example`) треба да се заменат со вистински тајни пред апликацијата да се користи надвор од локална демонстрација.
+
+## 6. GitHub Actions
+
+Работниот процес (`.github/workflows/ci-cd.yml`) се активира на секој push кон гранката `main` и се состои од три поврзани задачи (jobs):
+
+**test** – инсталира PHP 8.3 со потребните екстензии, ги инсталира Composer зависностите (со кеширање помеѓу извршувањата), инсталира Node.js и npm зависностите, го проверува фронтендот со ESLint (`npm run lint`), го гради интерфејсот со Vite (`npm run build`) и на крај го извршува целосниот Pest тест пакет – против SQLite база во меморија, независно од продукциската MySQL конфигурација, заради брзина и изолација.
+
+**build-and-push** (зависи од `test`) – се најавува на Docker Hub со репозиториумски тајни (`DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN`), ја гради Docker сликата преку Docker Buildx и ја пушта на регистарот со две ознаки: `:latest` и `:<commit-sha>`, за секоја верзија да може јасно да се следи наназад до конкретен commit.
+
+**deploy** (зависи од `build-and-push`, бонус CD) – го повлекува веќе изградениот image (`docker compose pull`) и ја рестартира локалната Docker Compose околина (`docker compose up -d`). Оваа задача е поставена да се извршува на **self-hosted runner**, регистриран на сопствениот компјутер, бидејќи GitHub-овите облак runner-и немаат пристап до локалната Docker Desktop околина. Ако self-hosted runner-от не е активен, задачата останува во исчекување без да падне и без да ги блокира претходните две задачи.
+
+## 7. Kubernetes
+
+Апликацијата е распоредена во посебен namespace (`invoices`), со следниве ресурси:
+
+- **Deployment за `app`** – 2 реплики, слика повлечена од Docker Hub, конфигурација и тајни инјектирани преку `app-config` (ConfigMap) и `app-secret` (Secret) со `envFrom`, со readiness и liveness проби кои праќаат HTTP барање до Laravel-овата `/up` рута.
+- **Deployment за `worker`** – 1 реплика, иста слика како `app`, но со поинакви `args` (`worker` наместо `web`), со истите ConfigMap/Secret ресурси.
+- **StatefulSet за `db`** – MySQL 8.4, 1 реплика, со `volumeClaimTemplates` (2Gi, стандардна StorageClass) за перзистентно складирање кое опстојува и по рестарт на подот, конфигурација и тајни преку `db-config`/`db-secret`, и readiness/liveness проби преку `mysqladmin ping`.
+- **Service** ресурси од тип ClusterIP за `app` и `db`, за интерна комуникација во кластерот.
+- **Ingress** (класа `nginx`) кој го рутира надворешниот сообраќај кон `app` сервисот – бидејќи нема одделен API/frontend пат, целиот сообраќај оди на еден бекенд.
+
+Манифестите се тестирани и демонстрирани врз вградениот Kubernetes во Docker Desktop (профил базиран на `kind`, со рачно инсталиран `ingress-nginx` контролер), при што е потврдено дека регистрација на корисник преку Ingress навистина резултира со запишан ред во MySQL базата во `db` подот – со тоа е потврдено дека целиот синџир (Ingress → Service → Deployment → StatefulSet) реално функционира, а не само дека подовите се во состојба Running.
+
+## 8. Континуирана интеграција и испорака (CI/CD)
+
+Целиот процес на континуирана интеграција и испорака е автоматизиран преку GitHub Actions. Секој push на гранката `main` првo поминува низ проверка на квалитетот на кодот (linting) и целосниот Pest тест пакет, за да се потврди дека новите промени не носат регресија. Потоа, доколку тестовите поминат успешно, се гради единствената Docker слика на апликацијата и се пушта на Docker Hub со ознака поврзана со конкретниот commit.
+
+Опционално, доколку self-hosted runner-от на локалниот компјутер е активен, pipeline-от продолжува со CD чекор кој автоматски ја повлекува новата слика и ја рестартира локалната Docker Compose околина – со што секој push резултира со реално ажурирана, работечка верзија на апликацијата, без рачна интервенција. Kubernetes манифестите не се дел од автоматскиот deploy чекор (тие се применуваат рачно со `kubectl apply`), но се целосно подготвени и демонстрирани дека функционираат во сопствен namespace, како посебен, повторливо документиран чекор.
