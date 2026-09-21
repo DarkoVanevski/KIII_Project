@@ -76,12 +76,6 @@ jobs:
             ${{ secrets.DOCKERHUB_USERNAME }}/kiii-invoices-app:latest
             ${{ secrets.DOCKERHUB_USERNAME }}/kiii-invoices-app:${{ github.sha }}
 
-  # Bonus CD job. This only runs (and only *can* run) when a self-hosted
-  # runner has been registered for this repo on the student's own PC
-  # (Settings -> Actions -> Runners -> New self-hosted runner) and its
-  # runner process is online. If no such runner is registered/online, this
-  # job simply stays queued/pending forever - it does not fail and does not
-  # block the build-and-push job above.
   deploy:
     needs: build-and-push
     runs-on: self-hosted
@@ -90,9 +84,6 @@ jobs:
       name: production
     defaults:
       run:
-        # The self-hosted runner's Windows host only has Windows PowerShell
-        # (powershell.exe) installed, not PowerShell Core (pwsh) - which is
-        # what GitHub Actions defaults `run:` steps to on Windows runners.
         shell: cmd
     steps:
       - name: Checkout
